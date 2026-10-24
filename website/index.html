@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="ka">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ქართული ანბანი — S3 სტატიკური საიტი</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+Georgian:wght@400;700;900&family=Noto+Sans+Georgian:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="hero">
+    <p class="hero-letter" id="heroLetter" aria-hidden="true">ა</p>
+    <div class="hero-text">
+      <h1>ქართული ანბანი</h1>
+      <p>33 ასო, მხედრული დამწერლობა. დააჭირეთ ნებისმიერ ასოს და ნახეთ მისი სახელი და მაგალითი.</p>
+    </div>
+  </header>
+
+  <main>
+    <section class="detail" aria-live="polite">
+      <span class="detail-letter" id="detailLetter">ა</span>
+      <div>
+        <h2 id="detailName">ან</h2>
+        <p>მაგალითი: <strong id="detailWord">ატამი</strong></p>
+        <p class="detail-pos" id="detailPos">1 / 33</p>
+      </div>
+    </section>
+    <div class="grid" id="grid"></div>
+  </main>
+
+  <footer>
+    <p>ჰოსტინგი: Amazon S3 Static Website Hosting</p>
+    <p>მისამართი: <code id="host"></code></p>
+    <p>გვერდი ჩაიტვირთა: <span id="loaded"></span></p>
+  </footer>
+
+  <script src="script.js"></script>
+</body>
+</html>
