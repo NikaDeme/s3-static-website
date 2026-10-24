@@ -1,0 +1,35 @@
+# cfn-lint configuration (picked up automatically from the project folder)
+templates:
+  - template.yaml
+regions:
+  - us-east-1
+append_rules:
+  - ./rules
+configure_rules:
+  E9001:
+    free_tier_instance_types:
+      - t2.micro
+    free_tier_tag_key: FreeTierEligible
+    free_tier_tag_values:
+      - "true"
+    performance_instance_types:
+      - m5.large
+    performance_tag_key: PerformanceCritical
+    performance_tag_values:
+      - "true"
+      - "false"
+  E9002:
+    volume_types:
+      - gp3
+    priority_tag_key: Priority
+    priority_min: 3000
+    priority_max: 16000
+  E9003:
+    checked_settings:
+      - BlockPublicAcls
+      - BlockPublicPolicy
+      - IgnorePublicAcls
+      - RestrictPublicBuckets
+    public_access_tag_key: PublicAccessAllowed
+    public_access_tag_values:
+      - "true"

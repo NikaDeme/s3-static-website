@@ -1,0 +1,86 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Template that satisfies the custom cfn-lint rules E9001, E9002 and E9003
+
+Parameters:
+  AppEnv:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, staging, production]
+  AmiID:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+  FreeTierInstanceType:
+    Type: String
+    Default: t2.micro
+  PerformanceInstanceType:
+    Type: String
+    Default: m5.large
+
+Resources:
+  # E9001: t2.micro -> FreeTierEligible=true
+  FreeTierInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref AmiID
+      InstanceType: !Ref FreeTierInstanceType
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-free-tier"
+        - Key: FreeTierEligible
+          Value: "true"
+
+  # E9001: m5.large -> PerformanceCritical=true|false
+  PerformanceInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref AmiID
+      InstanceType: !Ref PerformanceInstanceType
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-performance"
+        - Key: PerformanceCritical
+          Value: "true"
+
+  # E9002: gp3 -> Priority between 3000 and 16000
+  DataVolume:
+    Type: AWS::EC2::Volume
+    Properties:
+      AvailabilityZone: !GetAtt FreeTierInstance.AvailabilityZone
+      Size: 10
+      VolumeType: gp3
+      Tags:
+        - Key: Priority
+          Value: "8000"
+        - Key: Environment
+          Value: !Ref AppEnv
+
+  # E9003: a false PublicAccessBlock setting -> PublicAccessAllowed=true
+  PublicAssetsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${AWS::StackName}-${AppEnv}-assets-${AWS::AccountId}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        IgnorePublicAcls: false
+        BlockPublicPolicy: false
+        RestrictPublicBuckets: false
+      Tags:
+        - Key: PublicAccessAllowed
+          Value: "true"
+
+  # Fully private bucket: rule E9003 does not require the tag
+  PrivateLogsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${AWS::StackName}-${AppEnv}-logs-${AWS::AccountId}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+
+Outputs:
+  PublicAssetsBucketName:
+    Value: !Ref PublicAssetsBucket
+  DataVolumeId:
+    Value: !Ref DataVolume
