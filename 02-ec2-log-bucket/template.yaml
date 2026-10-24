@@ -1,0 +1,172 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::LanguageExtensions
+Description: EC2 instance with an S3 log bucket; bucket name and environment are exposed as system variables
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Environment
+        Parameters:
+          - AppEnv
+          - LogBucketNamePrefix
+      - Label:
+          default: EC2 configuration
+        Parameters:
+          - AmiID
+          - InstanceType
+          - KeyName
+          - InstanceProfileName
+          - SSHLocation
+    ParameterLabels:
+      AppEnv:
+        default: Application environment
+      LogBucketNamePrefix:
+        default: Log bucket name prefix
+
+Parameters:
+  AppEnv:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - staging
+      - production
+    Description: Application environment
+  LogBucketNamePrefix:
+    Type: String
+    Default: webserver
+    AllowedPattern: "^[a-z0-9][a-z0-9-]{1,20}$"
+    ConstraintDescription: Lowercase letters, digits and hyphens only (2-21 characters)
+    Description: Prefix for the S3 log bucket name
+  AmiID:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+    Description: AMI ID, resolved from the public SSM parameter for the latest Amazon Linux 2023
+  InstanceType:
+    Type: String
+    Default: t3.micro
+    AllowedValues:
+      - t2.micro
+      - t3.micro
+      - t3.small
+      - t3.medium
+    Description: EC2 instance type
+  KeyName:
+    Type: String
+    Default: vockey
+    Description: Existing EC2 key pair name for SSH (leave empty for no key)
+  InstanceProfileName:
+    Type: String
+    Default: LabInstanceProfile
+    Description: Existing IAM instance profile (leave empty for none)
+  SSHLocation:
+    Type: String
+    Default: 0.0.0.0/0
+    AllowedPattern: "^(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})$"
+    ConstraintDescription: Must be a valid CIDR range, e.g. 203.0.113.10/32
+    Description: CIDR range allowed to connect over SSH
+
+Rules:
+  ProductionInstanceSize:
+    RuleCondition: !Equals [!Ref AppEnv, production]
+    Assertions:
+      - Assert: !Contains [[t3.small, t3.medium], !Ref InstanceType]
+        AssertDescription: The production environment requires t3.small or t3.medium
+
+Mappings:
+  EnvConfig:
+    dev:
+      LogRetentionDays: 7
+    staging:
+      LogRetentionDays: 30
+    production:
+      LogRetentionDays: 90
+
+Conditions:
+  IsProduction: !Equals [!Ref AppEnv, production]
+  HasKeyName: !Not [!Equals [!Ref KeyName, ""]]
+  HasInstanceProfile: !Not [!Equals [!Ref InstanceProfileName, ""]]
+
+Resources:
+  WebServerLogBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${LogBucketNamePrefix}-${AppEnv}-logs-${AWS::AccountId}"
+      VersioningConfiguration:
+        Status: !If [IsProduction, Enabled, Suspended]
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireOldLogs
+            Status: Enabled
+            ExpirationInDays: !FindInMap [EnvConfig, !Ref AppEnv, LogRetentionDays]
+      Tags:
+        - Key: Environment
+          Value: !Ref AppEnv
+
+  WebServerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "SSH access for ${AWS::StackName}"
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref SSHLocation
+      Tags:
+        - Key: Environment
+          Value: !Ref AppEnv
+
+  WebServerInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref AmiID
+      InstanceType: !Ref InstanceType
+      KeyName: !If [HasKeyName, !Ref KeyName, !Ref AWS::NoValue]
+      IamInstanceProfile: !If [HasInstanceProfile, !Ref InstanceProfileName, !Ref AWS::NoValue]
+      SecurityGroupIds:
+        - !GetAtt WebServerSecurityGroup.GroupId
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          yum update -y
+
+          # System-wide variables for every login session
+          echo "LOG_BUCKET=${WebServerLogBucket}" >> /etc/environment
+          echo "APP_ENV=${AppEnv}" >> /etc/environment
+
+          # Also exported for login shells
+          cat > /etc/profile.d/app-env.sh << 'VARS'
+          export LOG_BUCKET=${WebServerLogBucket}
+          export APP_ENV=${AppEnv}
+          VARS
+          chmod 644 /etc/profile.d/app-env.sh
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-${AppEnv}-webserver"
+        - Key: Environment
+          Value: !Ref AppEnv
+
+Outputs:
+  LogBucketName:
+    Description: Name of the S3 log bucket
+    Value: !Ref WebServerLogBucket
+    Export:
+      Name: !Sub "${AWS::StackName}-LogBucketName"
+  InstanceId:
+    Description: EC2 instance ID
+    Value: !Ref WebServerInstance
+  PublicIP:
+    Description: Public IP of the EC2 instance
+    Value: !GetAtt WebServerInstance.PublicIp
+  SSHCommand:
+    Description: Command to connect over SSH
+    Value: !Sub "ssh -i labsuser.pem ec2-user@${WebServerInstance.PublicIp}"
+  AppEnvironment:
+    Description: Selected environment
+    Value: !Ref AppEnv
