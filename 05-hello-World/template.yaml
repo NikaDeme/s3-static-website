@@ -1,0 +1,166 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Hello World Flask app in an AutoScaling group behind a Load Balancer
+
+Resources:
+
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+
+  Igw:
+    Type: AWS::EC2::InternetGateway
+
+  IgwAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Vpc
+      InternetGatewayId: !Ref Igw
+
+  Subnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+
+  Subnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.0.2.0/24
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+
+  RouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+
+  Route:
+    Type: AWS::EC2::Route
+    DependsOn: IgwAttachment
+    Properties:
+      RouteTableId: !Ref RouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref Igw
+
+  Subnet1Assoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RouteTable
+      SubnetId: !Ref Subnet1
+
+  Subnet2Assoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RouteTable
+      SubnetId: !Ref Subnet2
+
+  # ---------- აპლიკაცია ----------
+  LaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Metadata:
+      AWS::CloudFormation::Init:
+        config:
+          packages:
+            yum:
+              python3-pip: []
+          files:
+            /opt/helloworld.py:
+              mode: "000755"
+              content: |
+                from flask import Flask
+                app = Flask(__name__)
+
+                @app.route("/")
+                def hello():
+                    return "Hello, World, from AWS!"
+
+                app.run(host="0.0.0.0", port=5000)
+            /etc/systemd/system/helloworld.service:
+              content: |
+                [Service]
+                ExecStart=/usr/bin/python3 /opt/helloworld.py
+                Restart=always
+                [Install]
+                WantedBy=multi-user.target
+          commands:
+            01_flask:
+              command: pip3 install flask
+            02_start:
+              command: systemctl daemon-reload && systemctl enable --now helloworld
+    Properties:
+      LaunchTemplateData:
+        ImageId: "{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64}}"
+        InstanceType: t3.micro
+        SecurityGroupIds:
+          - !Ref AppSg
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            dnf install -y aws-cfn-bootstrap
+            /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource LaunchTemplate --region ${AWS::Region}
+
+  ElbSg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Load balancer - port 80 from internet
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+  AppSg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: App - port 5000 from load balancer
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5000
+          ToPort: 5000
+          SourceSecurityGroupId: !Ref ElbSg
+
+  Elb:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    DependsOn: IgwAttachment
+    Properties:
+      Subnets: [!Ref Subnet1, !Ref Subnet2]
+      SecurityGroups: [!Ref ElbSg]
+
+  Tg:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId: !Ref Vpc
+      Port: 5000
+      Protocol: HTTP
+
+  Listener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref Elb
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref Tg
+
+  Asg:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    DependsOn: [Listener, Route]
+    Properties:
+      MinSize: "1"
+      MaxSize: "1"
+      VPCZoneIdentifier: [!Ref Subnet1, !Ref Subnet2]
+      LaunchTemplate:
+        LaunchTemplateId: !Ref LaunchTemplate
+        Version: !GetAtt LaunchTemplate.LatestVersionNumber
+      TargetGroupARNs: [!Ref Tg]
+
+Outputs:
+  AppUrl:
+    Value: !Sub "http://${Elb.DNSName}"
