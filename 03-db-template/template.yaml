@@ -1,0 +1,95 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::LanguageExtensions
+Description: BTU Lecture 3 - Aurora database (test / prod)
+
+Parameters:
+  Environment:
+    Type: String
+    Default: test
+    AllowedValues: ["test", "prod"]
+
+Conditions:
+  ProdEnv: !Equals [!Ref Environment, "prod"]
+  TestEnv: !Equals [!Ref Environment, "test"]
+
+Resources:
+  # test: პაროლი ხელით წერია
+  HardcodedDatabaseSecret:
+    Type: AWS::SecretsManager::Secret
+    Condition: TestEnv
+    Properties:
+      SecretString:
+        Fn::ToJsonString:
+          username: "dbuser"
+          password: "dbpassword"
+
+  # prod: პაროლი ავტომატურად გენერირდება
+  GeneratedDatabaseSecret:
+    Type: AWS::SecretsManager::Secret
+    Condition: ProdEnv
+    Properties:
+      GenerateSecretString:
+        SecretStringTemplate:
+          Fn::ToJsonString:
+            username: "dbuser"
+        GenerateStringKey: "password"
+        PasswordLength: 16
+        ExcludeCharacters: '"@/\'
+
+  # VpcId არ არის მითითებული -> იქმნება Default VPC-ში
+  MiddlewareInstanceSg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Middleware security group
+
+  DatabaseSg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Database security group
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          SourceSecurityGroupId: !GetAtt MiddlewareInstanceSg.GroupId
+
+  Database:
+    Type: AWS::RDS::DBCluster
+    DeletionPolicy: !If [ProdEnv, "Retain", "Delete"]
+    UpdateReplacePolicy: !If [ProdEnv, "Retain", "Delete"]
+    Properties:
+      Engine: aurora-mysql
+      ServerlessV2ScalingConfiguration:
+        MinCapacity: 0
+        MaxCapacity: 1
+        SecondsUntilAutoPause: 300
+      MasterUsername: !Sub
+        - "{{resolve:secretsmanager:${Secret}:SecretString:username}}"
+        - Secret: !If [ProdEnv, !Ref GeneratedDatabaseSecret, !Ref HardcodedDatabaseSecret]
+      MasterUserPassword: !Sub
+        - "{{resolve:secretsmanager:${Secret}:SecretString:password}}"
+        - Secret: !If [ProdEnv, !Ref GeneratedDatabaseSecret, !Ref HardcodedDatabaseSecret]
+      VpcSecurityGroupIds:
+        - !GetAtt DatabaseSg.GroupId
+
+  DatabaseInstance:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: !If [ProdEnv, "Retain", "Delete"]
+    UpdateReplacePolicy: !If [ProdEnv, "Retain", "Delete"]
+    Properties:
+      Engine: aurora-mysql
+      DBClusterIdentifier: !Ref Database
+      DBInstanceClass: db.serverless
+
+Outputs:
+  DatabaseEndpointAddress:
+    Value: !GetAtt Database.Endpoint.Address
+    Export:
+      Name: DatabaseEndpointAddress
+  DatabaseEndpointPort:
+    Value: !GetAtt Database.Endpoint.Port
+    Export:
+      Name: DatabaseEndpointPort
+  DbCredentials:
+    Value: !If [ProdEnv, !Ref GeneratedDatabaseSecret, !Ref HardcodedDatabaseSecret]
+    Export:
+      Name: DbCredentials
