@@ -1,0 +1,44 @@
+Parameters:
+  DBEngine:
+    Type: String
+    Default: mysql
+    AllowedValues: [mysql, postgres, mariadb]
+  DBInstanceClass:
+    Type: String
+    Default: db.t3.micro
+    AllowedValues: [db.t3.micro, db.t3.small]
+  AllocatedStorage:
+    Type: Number
+    Default: 20
+    MinValue: 20
+    MaxValue: 100
+  DBName:
+    Type: String
+    Default: mydb
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9]*'
+  MasterUsername:
+    Type: String
+    NoEcho: true
+  MasterUserPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 8
+  DBSubnetGroupName:
+    Type: String
+  VPCSecurityGroupIds:
+    Type: List<AWS::EC2::SecurityGroup::Id>
+
+Resources:
+  MyDatabase:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      Engine: !Ref DBEngine
+      DBInstanceClass: !Ref DBInstanceClass
+      AllocatedStorage: !Ref AllocatedStorage
+      DBName: !Ref DBName
+      MasterUsername: !Ref MasterUsername
+      MasterUserPassword: !Ref MasterUserPassword
+      DBSubnetGroupName: !Ref DBSubnetGroupName
+      VPCSecurityGroups: !Ref VPCSecurityGroupIds
+      PubliclyAccessible: false
+      DeletionProtection: true

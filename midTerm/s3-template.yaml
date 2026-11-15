@@ -1,0 +1,19 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: S3 bucket with a unique, dynamically generated name
+
+Resources:
+  MyBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      # უნიკალური სახელი ფსევდო პარამეტრებით და Fn::Sub ფუნქციით
+      BucketName: !Sub 'my-app-logs-${AWS::AccountId}-${AWS::Region}'
+      # ალტერნატივა Fn::Join-ით (იგივე შედეგს იძლევა):
+      # BucketName: !Join ['-', ['my-app-logs', !Ref 'AWS::AccountId', !Ref 'AWS::Region']]
+
+Outputs:
+  BucketName:
+    Description: Name of the created S3 bucket
+    Value: !Ref MyBucket
+  BucketArn:
+    Description: ARN of the created S3 bucket
+    Value: !GetAtt MyBucket.Arn
